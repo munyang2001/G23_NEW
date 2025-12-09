@@ -208,18 +208,42 @@ class Board_Optimized:
         new_board.hash = self.hash
         return new_board
 
+    # def to_nn_input(self, player_perspective):
+    #     tensor = np.zeros((3, 11, 11), dtype=np.float32)
+    #     my_int = self.RED_INT if player_perspective == Colour.RED else self.BLUE_INT
+    #     opp_int = self.BLUE_INT if my_int == self.RED_INT else self.RED_INT
+    #
+    #     tensor[0] = (self.grid == my_int).astype(np.float32)
+    #     tensor[1] = (self.grid == opp_int).astype(np.float32)
+    #
+    #     if player_perspective == Colour.BLUE:
+    #         tensor[2, :, :] = 1.0
+    #
+    #     return tensor
+
     def to_nn_input(self, player_perspective):
+        # Only 3 channels needed now! (My Stones, Opp Stones, Empty)
         tensor = np.zeros((3, 11, 11), dtype=np.float32)
+
+        # 1. Get the grid relative to the current player
+        # If I am Blue, we treat Blue as "My Stones"
         my_int = self.RED_INT if player_perspective == Colour.RED else self.BLUE_INT
         opp_int = self.BLUE_INT if my_int == self.RED_INT else self.RED_INT
 
-        tensor[0] = (self.grid == my_int).astype(np.float32)
-        tensor[1] = (self.grid == opp_int).astype(np.float32)
-        
+        grid_view = self.grid
+
+        # 2. CANONICAL ROTATION
+        # If I am Blue, I transpose the board so "Left-Right" becomes "Top-Bottom"
         if player_perspective == Colour.BLUE:
-            tensor[2, :, :] = 1.0
-            
+            grid_view = grid_view.T  # Transpose (Swap Rows/Cols)
+
+        # 3. Fill Tensor
+        tensor[0] = (grid_view == my_int).astype(np.float32)
+        tensor[1] = (grid_view == opp_int).astype(np.float32)
+        tensor[2] = (grid_view == self.EMPTY).astype(np.float32)
+
         return tensor
+
 
     def hash_value(self):
         return self.hash
