@@ -8,6 +8,7 @@ from src.Board import Board
 from agents.Group23.board_set import Board_Optimized
 import threading
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from agents.Group23 import heuristics
 class Node:
     __slots__ = ['parent', 'move', 'player', 'visits', 'wins', 
                  'rave_visits', 'rave_wins', 'children', 'allowed_moves']
@@ -44,7 +45,7 @@ class MCTS:
         self.root.parent = None
     
 
-    def search(self, board, color, time_limit):
+    def search(self, board, color, turn, time_limit):
         time_start = time.time()
         
         random_randrange = random.randrange
@@ -90,14 +91,36 @@ class MCTS:
 
                 if board_copy.winner is not None:
                     break
-
+            
             # --- EXPANSION ---
+            # Dead Cell Pruning
+            pruned_moves = []
+            for move in self.empty_spots:
+                if not heuristics.is_dead_cell(board, color, move[0], move[1]):
+                    pruned_moves.append(move)
             if board_copy.winner is None and node.allowed_moves:
                 # Pick move for CURRENT player (node.player)
-                moves_len = len(node.allowed_moves)
-                rand_idx = random_randrange(moves_len)
-                node.allowed_moves[rand_idx], node.allowed_moves[-1] = node.allowed_moves[-1], node.allowed_moves[rand_idx]
-                move_to_expand = node.allowed_moves.pop()
+                if pruned_moves:
+                    # HEURISTICS SCORING
+                    best_move = None
+                    best_score = -(10**9)
+                    for move in pruned_moves:
+                        h = heuristics.heuristic_scoring(board_copy, color, move[0], move[1], turn)
+                        if h > best_score:
+                            best_score = h
+                            best_move = move
+                    print(f"best move {best_move}")
+                    print(f"best score {best_score}")
+                    input("...")
+
+                    node.allowed_moves.remove(best_move)
+                    move_to_expand = best_move
+                else:
+                    # Select random move
+                    moves_len = len(node.allowed_moves)
+                    rand_idx = random_randrange(moves_len)
+                    node.allowed_moves[rand_idx], node.allowed_moves[-1] = node.allowed_moves[-1], node.allowed_moves[rand_idx]
+                    move_to_expand = node.allowed_moves.pop()
 
                 current_p = node.player
                 play_color = Colour.RED if current_p == 1 else Colour.BLUE
@@ -256,7 +279,7 @@ class Agent(AgentBase):
         if len(legal_moves) == 1:
             return Move(legal_moves[0][0], legal_moves[0][1])
 
-        row, col = self.mcts.search(optimized_board, self.colour, time_limit=8.5)
+        row, col = self.mcts.search(optimized_board, self.colour, turn, time_limit=8.5)
         my_move_tuple = (row, col)
         self.mcts.update_root(my_move_tuple)
         return Move(row, col)
