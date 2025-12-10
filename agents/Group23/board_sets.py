@@ -9,8 +9,14 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
-ZOBRIST_TABLE = [[[random.getrandbits(64) for _ in range(2)] for _ in range(11)] for _ in range(11)]
-TURN_HASH = random.getrandbits(64)
+
+# Set a fixed seed JUST for the table generation
+# This ensures Table A == Table B in every process
+rng = random.Random(42)
+ZOBRIST_TABLE = [[[rng.getrandbits(64) for _ in range(2)] for _ in range(11)] for _ in range(11)]
+TURN_HASH = rng.getrandbits(64)
+# ZOBRIST_TABLE = [[[random.getrandbits(64) for _ in range(2)] for _ in range(11)] for _ in range(11)]
+# TURN_HASH = random.getrandbits(64)
 
 class Board_Optimized:
     RED_INT = 1

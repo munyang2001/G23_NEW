@@ -1,4 +1,4 @@
-import time
+import uuid
 import random
 import torch
 import numpy as np
@@ -21,9 +21,9 @@ from agents.Group23.board_sets import Board_Optimized
 from agents.Group23.Agent_Parallel import MCTS
 
 # --- CONFIGURATION ---
-NUM_GAMES = 100  # Set this to however many games you want (e.g., 1000)
+NUM_GAMES = 625  # Set this to however many games you want (e.g., 1000)
 TIME_LIMIT = 0.5  # 0.5s is a good balance for data generation
-WORKERS = 4
+WORKERS = 6
 TEMPERATURE_EXP = 3.0  # Sharpening factor (Higher = more decisive targets)
 
 
@@ -71,6 +71,34 @@ class DataCollectorAgent(AgentBase):
                 continue
 
         if aggregated_stats:
+            # --- DIRICHLET NOISE (Exploration) ---
+            # We add noise to the visit counts to encourage the agent to try
+            # different moves during self-play, preventing it from playing
+            # the exact same game 1000 times.
+
+            # Extract moves and counts
+            moves = list(aggregated_stats.keys())
+            counts = np.array([aggregated_stats[m] for m in moves], dtype=np.float32)
+            total_visits = counts.sum()
+
+            # Normalize to get probability distribution (pi)
+            pi_clean = counts / total_visits
+
+            # Generate Dirichlet Noise
+            # alpha=0.3 is standard for Chess (average ~35 moves).
+            # For Hex 11x11 (average ~60 moves), 0.3 is a good starting point.
+            alpha = 0.3
+            noise = np.random.dirichlet([alpha] * len(moves))
+
+            # Mix: 75% Truth + 25% Noise
+            epsilon = 0.25
+            pi_noisy = (1 - epsilon) * pi_clean + epsilon * noise
+
+            # Update aggregated_stats with noisy counts
+            # We scale back up to 'total_visits' so the sharpening logic below works mathematically
+            for i, m in enumerate(moves):
+                aggregated_stats[m] = pi_noisy[i] * total_visits
+
             # --- SHARPENING LOGIC ---
             total_powered = 0
             powered_stats = {}
@@ -150,10 +178,19 @@ def main():
                 # 2. Swap Handling
                 if move.x == -1:
                     if turn != 2: raise ValueError("Illegal swap")
+                    if active_agent.colour != Colour.BLUE: raise ValueError("Illegal swap")
+
                     # Swap roles
                     red_agent, blue_agent = blue_agent, red_agent
+                    # Swap internal colours
                     red_agent.colour = Colour.RED
                     blue_agent.colour = Colour.BLUE
+
+                    # Swap the game_history
+                    red_agent.game_history, blue_agent.game_history = blue_agent.game_history, red_agent.game_history
+
+                    # Blue continues to play
+                    current_colour = Colour.BLUE
                 else:
                     board.set_tile_colour(move.x, move.y, current_colour)
                     current_colour = Colour.BLUE if current_colour == Colour.RED else Colour.RED
@@ -182,10 +219,16 @@ def main():
 
             # Periodic Save
             if i % 10 == 0:
-                torch.save(all_samples, "self_play_data_temp.pt")
+                temp_filename = f"self_play_data_temp.pt"
+                torch.save(all_samples, temp_filename)
 
-    torch.save(all_samples, "self_play_data_final.pt")
-    print(f"Success! Saved {len(all_samples)} samples.")
+    # Save with the unique ID
+    # Generate a unique 8-character ID for this specific terminal run
+    run_id = uuid.uuid4().hex[:8]
+    final_filename = f"self_play_data_{run_id}.pt"
+    torch.save(all_samples, final_filename)
+
+    print(f"Success! Saved {len(all_samples)} samples to {final_filename}.")
 
 
 if __name__ == "__main__":

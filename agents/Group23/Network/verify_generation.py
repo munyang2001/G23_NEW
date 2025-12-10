@@ -1,9 +1,6 @@
-import time
 import random
-import torch
 import numpy as np
 import concurrent.futures
-import os
 
 # --- IMPORTS ---
 from src.Board import Board
@@ -88,6 +85,34 @@ class DataCollectorAgent(AgentBase):
                 continue
 
         if aggregated_stats:
+            # --- DIRICHLET NOISE (Exploration) ---
+            # We add noise to the visit counts to encourage the agent to try
+            # different moves during self-play, preventing it from playing
+            # the exact same game 1000 times.
+
+            # Extract moves and counts
+            moves = list(aggregated_stats.keys())
+            counts = np.array([aggregated_stats[m] for m in moves], dtype=np.float32)
+            total_visits = counts.sum()
+
+            # Normalize to get probability distribution (pi)
+            pi_clean = counts / total_visits
+
+            # Generate Dirichlet Noise
+            # alpha=0.3 is standard for Chess (average ~35 moves).
+            # For Hex 11x11 (average ~60 moves), 0.3 is a good starting point.
+            alpha = 0.3
+            noise = np.random.dirichlet([alpha] * len(moves))
+
+            # Mix: 75% Truth + 25% Noise
+            epsilon = 0.25
+            pi_noisy = (1 - epsilon) * pi_clean + epsilon * noise
+
+            # Update aggregated_stats with noisy counts
+            # We scale back up to 'total_visits' so the sharpening logic below works mathematically
+            for i, m in enumerate(moves):
+                aggregated_stats[m] = pi_noisy[i] * total_visits
+
             # --- SHARPENING LOGIC ---
             # We raise visits to a power (e.g., 2 or 3) to emphasize the best moves.
             # This is standard practice in AlphaZero to create cleaner training targets.
