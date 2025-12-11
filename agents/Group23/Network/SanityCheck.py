@@ -3,7 +3,7 @@ import numpy as np
 from agents.Group23.Network.HexPolicyNet import HexResNet
 
 # CONFIG
-MODEL_PATH = "./hex_model_epoch_10.pt"
+MODEL_PATH = "./hex_model_epoch_10.pth"
 BOARD_SIZE = 11
 
 
