@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-
 class AlphaZeroLoss(nn.Module):
     def __init__(self):
         super(AlphaZeroLoss, self).__init__()
@@ -11,6 +10,13 @@ class AlphaZeroLoss(nn.Module):
         """
         Returns: (total_loss, policy_loss, value_loss)
         """
+        target_probs = torch.as_tensor(target_probs, dtype=torch.float32)
+
+        # Optional, but safe:
+        pi_sum = target_probs.sum()
+        if pi_sum > 0:
+            target_probs = target_probs / pi_sum
+
         # --- A. Calculate Value Loss ---
         # Fix shape mismatch: Flatten (64, 1) -> (64) to match target
         v_pred = pred_value.view(-1)
