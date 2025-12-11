@@ -124,7 +124,6 @@ class HexResNet(nn.Module):
         # -------------------------------------------------
         assert x.dim() == 4, f"Expected 4D input (N, C, H, W), got {x.shape}"
         N, C, H, W = x.shape
-        assert N == 121, f"Expected 121 input board positions, got {N}"
         assert H == self.board_size and W == self.board_size, f"Bad Board Size: {H}x{W}"
         assert C == self.in_channels, f"Bad Channel Count: {C}"
 

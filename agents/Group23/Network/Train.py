@@ -1,147 +1,117 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 from agents.Group23.Network.HexPolicyNet import *
 from agents.Group23.Network.Loss import AlphaZeroLoss
+
 
 class HexDataset(Dataset):
     def __init__(self, data_path):
         super().__init__()
+        # Load data (weights_only=False required for older formats/tuples)
         self.data = torch.load(data_path, weights_only=False)
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        assert len(self.data[idx]) == 3, "Wrong data format!"
-
         board_state, pi, v = self.data[idx]
 
+        # Convert to float32 tensors
         board_state = torch.tensor(board_state, dtype=torch.float32)
         pi = torch.tensor(pi, dtype=torch.float32)
         v = torch.tensor(v, dtype=torch.float32)
 
-        sample = (board_state, pi, v,)
-
-        return sample
+        return board_state, pi, v
 
 
 if __name__ == "__main__":
-    # For splitting the training and validation datasets
-    from torch.utils.data import random_split
-
-    # ---- Data Loader ----
-    full_dataset = HexDataset("./MASTER_DATASET.pt")
-
-    train_size = int(len(full_dataset) * 0.9)
-    val_size = len(full_dataset) - train_size
-    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
-
-    print(f"Training on {train_size} samples | Validating on {val_size} samples")
-
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=256, shuffle=False)
-
     # ----Constants----
     LR = 0.001
     WEIGHT_DECAY = 0.0001
     EPOCHS = 10
+    BATCH_SIZE = 256
 
     # ----Device Setup----
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"On device: {device}")
+    print(f"Using Device: {device}")
 
-    # ----Model Initialisation----
+    # ----Data Loading & Splitting----
+    full_dataset = HexDataset("./MASTER_DATASET.pt")
+
+    # 90% Train, 10% Validation
+    train_size = int(0.9 * len(full_dataset))
+    val_size = len(full_dataset) - train_size
+    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+
+    print(f"Dataset Loaded: {len(full_dataset)} total samples.")
+    print(f"Training on {train_size} | Validating on {val_size}")
+
+    # Loaders
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+
+    # ----Model & Setup----
     model = HexResNet()
-    model.to(device)  # Move the model to GPU
+    model.to(device)
 
-    # ----Optimiser Initialisation----
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-
-    # ----Learning Rate Scheduler----
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)  # Lowers the lr by 10 times every 3 steps.
-
-    # ---- Loss Function ----
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
     criterion = AlphaZeroLoss()
 
-    # ---- Training Loop ----
-    model.train()  # Switch to training mode (enables Dropout/BatchNorm)
-
+    # ---- Main Loop ----
     for epoch in range(EPOCHS):
-        print(f"---- Epoch {epoch + 1}/{EPOCHS} ----")
+        print(f"\n==== Epoch {epoch + 1}/{EPOCHS} ====")
 
-        # We track running loss to see average performance over the epoch
-        running_loss = 0.0
+        # --- A. TRAINING PHASE ---
+        model.train()
+        train_loss = 0.0
 
         for batch_idx, (boards, pi_targets, v_targets) in enumerate(train_loader):
-            # 1. Move data to device
-            boards = boards.to(device)
-            pi_targets = pi_targets.to(device)
-            v_targets = v_targets.to(device)
+            boards, pi_targets, v_targets = boards.to(device), pi_targets.to(device), v_targets.to(device)
 
-            # 2. Zero Gradients
             optimizer.zero_grad()
-
-            # 3. Forward Pass
-            # Output will be: pred_pi, pred_v
             pred_pi, pred_v = model(boards)
+            total_loss, _, _ = criterion(pred_pi, pred_v, pi_targets, v_targets)
 
-            # 4. Calculate Loss
-            # It returns: total_loss, loss_pi, loss_v
-            total_loss, loss_pi, loss_v = criterion(pred_pi, pred_v, pi_targets, v_targets)
-
-            # 5. Backward Pass
             total_loss.backward()
-
-            # 6. Optimizer Step
             optimizer.step()
 
-            running_loss += total_loss.item()
+            train_loss += total_loss.item()
 
-            # 7. Print status every 50 batches
-            if batch_idx % 50 == 0:
-                print(
-                    f"Batch: {batch_idx} | Total Loss: {total_loss.item():.4f} | policy_loss: {loss_pi.item():.4f}, value_loss: {loss_v.item():.4f}"
-                )
+            if batch_idx % 100 == 0:
+                print(f" [Batch {batch_idx}] Train Loss: {total_loss.item():.4f}")
 
-        # ---- Training Loss ----
-        avg_loss = running_loss / len(train_loader)
-        print(f"====> Epoch {epoch + 1} Complete | Average Loss: {avg_loss:.4f}")
-
-        # ---- Validation Step ----
-        model.eval()  # Switch to evaluation mode (turns off Dropout/BatchNorm updates)
+        # --- B. VALIDATION PHASE ---
+        model.eval()
         val_loss = 0.0
         val_pi_loss = 0.0
         val_v_loss = 0.0
 
-        # We don't need gradients for validation (saves VRAM and speed)
         with torch.no_grad():
             for boards, pi_targets, v_targets in val_loader:
-                boards = boards.to(device)
-                pi_targets = pi_targets.to(device)
-                v_targets = v_targets.to(device)
+                boards, pi_targets, v_targets = boards.to(device), pi_targets.to(device), v_targets.to(device)
 
                 pred_pi, pred_v = model(boards)
-
-                # Sum up the losses
                 total_l, l_pi, l_v = criterion(pred_pi, pred_v, pi_targets, v_targets)
+
                 val_loss += total_l.item()
                 val_pi_loss += l_pi.item()
                 val_v_loss += l_v.item()
 
-        # Calculate averages
+        # --- C. METRICS & SAVING ---
+        avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(val_loader)
         avg_val_pi = val_pi_loss / len(val_loader)
         avg_val_v = val_v_loss / len(val_loader)
 
-        print(f"====> Validation: Avg Loss: {avg_val_loss:.4f} (Pi: {avg_val_pi:.4f}, V: {avg_val_v:.4f})")
+        print(
+            f"--> Result: Train Loss: {avg_train_loss:.4f} || Val Loss: {avg_val_loss:.4f} (Pi: {avg_val_pi:.4f}, V: {avg_val_v:.4f})")
 
-        model.train()  # CRITICAL: Switch back to train mode for the next epoch!
-
-        # Save the weights.
-        save_path = f"./hex_model_epoch_{epoch+1}.pt"
+        # Save Checkpoint
+        save_path = f"./hex_model_epoch_{epoch + 1}.pth"
         torch.save(model.state_dict(), save_path)
 
-        # Step the scheduler
+        # Step Scheduler
         scheduler.step()
 
     print("\nTraining Complete!")

@@ -3,7 +3,7 @@ import numpy as np
 from agents.Group23.Network.HexPolicyNet import HexResNet
 
 # CONFIG
-MODEL_PATH = "./hex_model_epoch_10.pth"  # Ensure this matches your actual file name
+MODEL_PATH = "./hex_model_epoch_10.pt"
 BOARD_SIZE = 11
 
 
@@ -59,5 +59,45 @@ def run_sanity_check():
     print(center_probs)
 
 
+def run_midgame_check():
+    # 1. Setup Device & Model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Loading model from {MODEL_PATH} to {device}...")
+
+    model = HexResNet()
+    model.load_state_dict(torch.load(MODEL_PATH, weights_only=True, map_location="cpu"))
+    model.to(device)
+    model.eval()  # Important: Disables Dropout/BatchNorm randomness
+
+    print("\n--- MID-GAME TEST ---")
+    # Create a board that is nearly full, where the move is obvious
+    # Example: A 3x3 block where Red needs to connect
+    input_tensor = torch.zeros((1, 3, 11, 11), dtype=torch.float32)
+
+    # Fill up some random stones to simulate a game
+    # Let's make an obvious "Bridge" connection for Red at (5,5)
+    # Red stones at (5,4) and (5,6)
+    input_tensor[0, 0, 5, 4] = 1.0
+    input_tensor[0, 0, 5, 6] = 1.0
+
+    # Opponent stones (Blue) blocking elsewhere
+    input_tensor[0, 1, 6, 5] = 1.0
+
+    # Set empty channel (inverse of others)
+    input_tensor[0, 2, :, :] = 1.0 - (input_tensor[0, 0] + input_tensor[0, 1])
+
+    input_tensor = input_tensor.to(device)
+
+    # Inference
+    with torch.no_grad():
+        pi_logits, v = model(input_tensor)
+
+    pi_probs = torch.softmax(pi_logits, dim=1).cpu().numpy().flatten()
+    top_idx = np.argsort(pi_probs)[::-1][0]
+    r, c = divmod(top_idx, 11)
+
+    print(f"Top Move: ({r}, {c}) with Confidence: {pi_probs[top_idx] * 100:.2f}%")
+
+
 if __name__ == "__main__":
-    run_sanity_check()
+    run_midgame_check()
