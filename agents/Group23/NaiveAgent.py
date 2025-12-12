@@ -5,7 +5,7 @@ from src.Colour import Colour
 from src.AgentBase import AgentBase
 from src.Move import Move
 from src.Board import Board
-from agents.Group23.board_set import Board_Optimized
+from agents.Group23.OptimisedBoardV2 import Board_Optimized
 import threading
 from concurrent.futures import ProcessPoolExecutor, as_completed
 class Node:
