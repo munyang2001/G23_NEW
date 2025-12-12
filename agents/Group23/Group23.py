@@ -6,7 +6,7 @@ from src.Colour import Colour
 from src.AgentBase import AgentBase
 from src.Move import Move
 from src.Board import Board
-from agents.Group23.board_sets import Board_Optimized
+from agents.Group23.board import Board_Optimized
 
 TIME = 8.5
 WORKERS = 8
