@@ -77,7 +77,7 @@ def main():
             f"Epoch {epoch + 1}/{EPOCHS} | Policy Loss: {total_p_loss / len(loader):.4f} | Value Loss: {total_v_loss / len(loader):.4f}")
 
     # 4. Save
-    save_path = "hex_model_gen2.pt"
+    save_path = "../../../hex_model_gen2.pt"
     torch.save(model.state_dict(), save_path)
     print(f"Training Complete. Saved to {save_path}")
     print("Next Step: Update 'generate_gen1.py' to load this new model and run it for the rest of the day!")

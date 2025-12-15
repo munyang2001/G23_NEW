@@ -13,13 +13,13 @@ from agents.Group23.OptimisedBoardV2 import Board_Optimized
 from agents.Group23.Network.HexPolicyNet import HexResNet
 
 # --- CONFIGURATION ---
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "hex_model_gen2.pt")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "hex_model_epoch_10.pt")
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Exploration (PUCT):
-# High exploration for Data Generation to find new tactical ideas.
-# (Set to 1.25 for competitive play, 3.0 - 4.0 for training data gen)
-CPU_CT = 4.0
+# INCREASED to 3.0. Since our priors are weak, we need high exploration
+# to force the MCTS to consult the Value Head on many different moves.
+CPU_CT = 1.25
 
 
 class NeuralNode:
@@ -64,8 +64,7 @@ class NeuralMCTS:
         if self.root.is_leaf():
             self.expand_and_evaluate(self.root, board)
 
-        # SIMULATION LOOP
-        # We can add a max_simulations break here if needed for consistent speed
+        sim_count = 0
         while time.time() - time_start < time_limit:
             node = self.root
             search_board = board.copy()
@@ -74,13 +73,16 @@ class NeuralMCTS:
             # 1. SELECTION
             while not node.is_leaf():
                 node = self.select_child(node)
+
                 mv = node.move
+                # Determine move color based on who made the move (prev player)
                 move_colour = Colour.RED if (3 - node.player) == 1 else Colour.BLUE
                 play_func(mv[0], mv[1], move_colour)
 
             # 2. CHECK TERMINAL / EXPANSION
             winner = search_board.winner
             if winner is not None:
+                # Value relative to node.player
                 if winner == Colour.RED:
                     v = 1.0 if node.player == 1 else -1.0
                 else:
@@ -90,6 +92,7 @@ class NeuralMCTS:
 
             # 3. BACKPROPAGATION
             self.backpropagate(node, v)
+            sim_count += 1
 
         # Fallback
         if not self.root.children:
@@ -97,16 +100,23 @@ class NeuralMCTS:
 
         # Select best move
         best_move = max(self.root.children.items(), key=lambda item: item[1].visits)[0]
+
         return best_move
 
     def select_child(self, node):
         best_score = -float('inf')
         best_child = None
+
+        # Pre-calculate sqrt for speed
         sqrt_parent_visits = math.sqrt(node.visits)
 
         for child in node.children.values():
+            # Q-value: Negate because we want to choose the move that is BAD for opponent
             q_val = -child.value()
+
+            # PUCT Formula
             u_val = CPU_CT * child.prior * sqrt_parent_visits / (1 + child.visits)
+
             score = q_val + u_val
 
             if score > best_score:
@@ -114,6 +124,7 @@ class NeuralMCTS:
                 best_child = child
 
         return best_child
+
 
     def expand_and_evaluate(self, node, board):
         current_colour = Colour.RED if node.player == 1 else Colour.BLUE
@@ -126,33 +137,34 @@ class NeuralMCTS:
 
         value = v.item()
 
-        # 2. Temperature/Sharpening
-        # Reduced from 3.0 to 1.5 to allow for more creative exploration in Gen 2
-        sharpening_factor = 1.5
+        # 2. Sharpening (Optional but helpful for weak Gen-0 policies)
+        # We multiply logits by 2.0 or 3.0 to make the "best" moves stand out more
+        sharpening_factor = 3.0
         pi_probs = torch.softmax(pi_logits * sharpening_factor, dim=1).cpu().numpy().flatten()
 
         # 3. Mask Illegal Moves & Renormalize
         legal_moves = list(board.get_legal_moves())
         policy_sum = 0.0
 
-        # Helper to calculate index based on rotation
-        def get_index(r, c):
-            if current_colour == Colour.BLUE:
-                return c * 11 + r
-            else:
-                return r * 11 + c
-
         for r, c in legal_moves:
-            policy_sum += pi_probs[get_index(r, c)]
+            if current_colour == Colour.BLUE:
+                idx = c * 11 + r
+            else:
+                idx = r * 11 + c
+            policy_sum += pi_probs[idx]
 
         # 4. Expand Children
         for r, c in legal_moves:
-            idx = get_index(r, c)
+            if current_colour == Colour.BLUE:
+                idx = c * 11 + r
+            else:
+                idx = r * 11 + c
 
-            # Safe Renormalization
+            # Renormalize: P(move) = P(raw) / Sum(legal)
             if policy_sum > 0:
                 prior = pi_probs[idx] / policy_sum
             else:
+                # Fallback (Safety): If network predicts 0.0 for ALL legal moves
                 prior = 1.0 / len(legal_moves)
 
             next_player = 3 - node.player
@@ -161,9 +173,11 @@ class NeuralMCTS:
 
         return value
 
+
     def backpropagate(self, node, value):
         curr = node
         current_val = value
+
         while curr is not None:
             curr.visits += 1
             curr.value_sum += current_val
@@ -174,24 +188,17 @@ class NeuralMCTS:
 class Agent(AgentBase):
     def __init__(self, colour: Colour):
         super().__init__(colour)
-
-        # --- CRITICAL UPDATE: 8 Blocks ---
-        self.model = HexResNet(num_blocks=8)
-
+        self.model = HexResNet(num_blocks=4)
         try:
             self.model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE, weights_only=True))
         except FileNotFoundError:
             print(f"ERROR: Model not found at {MODEL_PATH}")
-            exit()
-        except RuntimeError as e:
-            print(f"ERROR: Architecture Mismatch. Did you train 8 blocks? {e}")
             exit()
 
         self.model.to(DEVICE)
         self.mcts = NeuralMCTS(self.model)
 
     def make_move(self, turn: int, board: Board, opp_move: Move | None) -> Move:
-        # Standard Pie Rule Check
         if turn == 2 and opp_move is not None:
             if 2 <= opp_move.x <= 8 and 2 <= opp_move.y <= 8:
                 return Move(-1, -1)
@@ -199,12 +206,12 @@ class Agent(AgentBase):
         if opp_move is not None:
             self.mcts.update_root((opp_move.x, opp_move.y))
 
-        # Use efficient board
+        # OPTIMIZATION: Convert board once here
         optimized_board = Board_Optimized.from_game_board(board, self.colour)
 
-        # For Competitive Play: 4.0s.
-        # For Generation: This parameter is usually overridden by the generator script.
+        # Run Search
         best_move = self.mcts.search(optimized_board, self.colour, time_limit=4.0)
 
         self.mcts.update_root(best_move)
+
         return Move(best_move[0], best_move[1])
