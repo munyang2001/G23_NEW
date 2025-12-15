@@ -28,7 +28,7 @@ class ResidualBlock(nn.Module):
 
 
 class HexResNet(nn.Module):
-    def __init__(self, board_size=11, in_channels=3, num_blocks=4, width=128):
+    def __init__(self, board_size=11, in_channels=3, num_blocks=8, width=128):
         super(HexResNet, self).__init__()
         self.board_size = board_size
         self.in_channels = in_channels
