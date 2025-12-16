@@ -13,13 +13,13 @@ from agents.Group23.OptimisedBoardV2 import Board_Optimized
 from agents.Group23.Network.HexPolicyNet import HexResNet
 
 # --- CONFIGURATION ---
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "hex_model_gen2.pt")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "hex_model_final_tuned.pt")
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Exploration (PUCT):
 # High exploration for Data Generation to find new tactical ideas.
 # (Set to 1.25 for competitive play, 3.0 - 4.0 for training data gen)
-CPU_CT = 4.0
+CPU_CT = 1.25
 
 
 class NeuralNode:
@@ -128,7 +128,7 @@ class NeuralMCTS:
 
         # 2. Temperature/Sharpening
         # Reduced from 3.0 to 1.5 to allow for more creative exploration in Gen 2
-        sharpening_factor = 1.5
+        sharpening_factor = 1.0
         pi_probs = torch.softmax(pi_logits * sharpening_factor, dim=1).cpu().numpy().flatten()
 
         # 3. Mask Illegal Moves & Renormalize
@@ -188,6 +188,7 @@ class Agent(AgentBase):
             exit()
 
         self.model.to(DEVICE)
+        print(f"Successfully loaded model to {DEVICE}")
         self.mcts = NeuralMCTS(self.model)
 
     def make_move(self, turn: int, board: Board, opp_move: Move | None) -> Move:
@@ -204,7 +205,7 @@ class Agent(AgentBase):
 
         # For Competitive Play: 4.0s.
         # For Generation: This parameter is usually overridden by the generator script.
-        best_move = self.mcts.search(optimized_board, self.colour, time_limit=4.0)
+        best_move = self.mcts.search(optimized_board, self.colour, time_limit=8.0)
 
         self.mcts.update_root(best_move)
         return Move(best_move[0], best_move[1])
